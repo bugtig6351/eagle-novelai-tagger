@@ -1,0 +1,19 @@
+{
+    "id": "8cb2e235-fd4a-43b6-b41e-de1f14d3e802",
+    "version": "1.0.0",
+    "platform": "all",
+    "arch": "all",
+    "name": "NovelAI tag 解析器",
+    "logo": "/logo.png",
+    "keywords": [],
+    "devTools": true,
+    "preview": {
+        "jpg,png": {
+            "inspector": {
+                "path": "index.html",
+                "height": 100,
+                "multiSelect": false
+            }
+        }
+    }
+}

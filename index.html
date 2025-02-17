@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Inspector Plugin Example</title>
+    <style>
+      html {
+        font-size: 11px;
+        font-family: sans-serif;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+
+      body {
+        padding: 2px;
+        margin: 0;
+        color: transparent;
+      }
+
+      /* colors for different themes */
+
+      body[theme="LIGHT"],
+      body[theme="LIGHTGRAY"] {
+        color: black;
+      }
+
+      body[theme="GRAY"],
+      body[theme="BLUE"],
+      body[theme="PURPLE"],
+      body[theme="DARK"] {
+        color: white;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="exif-comment" style="margin: 10px"></div>
+    <script>
+      async function readPNGComment(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const arrayBuffer = e.target.result;
+              const dataView = new DataView(arrayBuffer);
+              const magic = dataView.getUint32(0, false); // PNG signature
+
+              if (magic !== 0x89504e47) {
+                throw new Error("Not a PNG file");
+              }
+
+              let offset = 8; // Skip PNG signature (8 bytes)
+              let comment = "";
+
+              while (offset < dataView.byteLength) {
+                const length = dataView.getUint32(offset, false);
+                const type = dataView.getUint32(offset + 4, true); // Big-endian
+
+                // Check chunk type
+                const keyLength = length;
+                const keyStart = offset + 8;
+                const keyEnd = keyStart + keyLength;
+
+                // Process the key and value
+                const keyData = new Uint8Array(
+                  arrayBuffer,
+                  keyStart,
+                  keyLength
+                );
+                const keyText = String.fromCharCode.apply(null, keyData);
+
+                // Split key and value by null terminator
+                const parts = keyText.split("\0");
+                const key = parts[0];
+                const value = parts[1];
+
+                if (key === "Comment") {
+                  comment = value;
+                  break;
+                }
+
+                offset += 12 + length; // 12 is chunk header length (4 len + 4 type + 4 CRC)
+              }
+
+              resolve(comment);
+            } catch (error) {
+              reject(error);
+            }
+          };
+          reader.onerror = (error) => reject(error);
+          reader.readAsArrayBuffer(file);
+        });
+      }
+
+      // Listen to plugin creation
+      eagle.onPluginCreate(async (plugin) => {
+        const theme = await eagle.app.theme;
+        document.body.setAttribute("theme", theme);
+
+        // Get the selected item
+        const items = await eagle.item.getSelected();
+        let item = items[0];
+        if (!item) {
+          document.getElementById("exif-comment").textContent =
+            "No item selected";
+          return;
+        }
+
+        // Check if the item's extension is PNG
+        if (item.ext !== "png") {
+          document.getElementById("exif-comment").textContent =
+            "Selected image is not a PNG file";
+          return;
+        }
+
+        // Get file path or URL
+        const filePath = item.filePath || item.fileURL;
+        if (!filePath) {
+          document.getElementById("exif-comment").textContent =
+            "File path not found";
+          return;
+        }
+
+        // Fetch the file content
+        fetch(filePath)
+          .then((response) => response.blob())
+          .then((blob) => {
+            const file = new File([blob], item.name, { type: "image/png" });
+            return readPNGComment(file);
+          })
+          .then((comment) => {
+            try {
+              // Parse Comment JSON
+              const commentData = JSON.parse(comment);
+              const prompt = commentData.prompt || "";
+              const baseCaption = commentData.v4_prompt?.caption?.base_caption || "";
+              const charCaptions = commentData.v4_prompt?.caption?.char_captions || [];
+
+              // Process and concatenate strings
+              const strings = [prompt, baseCaption, ...charCaptions.map(c => c.char_caption)];
+              const processedStrings = strings.map(str => {
+                // Remove [ ] { } and replace _ with space
+                return str.replace(/[{}\[\]]/g, "").replace(/_/g, " ");
+              });
+
+              // Split by commas and split into array
+              const rawTags = processedStrings.join(",").split(",").map(s => s.trim());
+              const tags = rawTags.filter(tag => tag !== ""); // Remove empty strings
+
+              // Merge with existing tags and deduplicate
+              const uniqueTags = Array.from(new Set([...item.tags, ...tags]));
+
+              // Set tags to the item
+              item.tags = uniqueTags;
+              item.save().then(() => {
+                console.log("Tags added successfully:", uniqueTags);
+                document.getElementById(
+                  "exif-comment"
+                ).textContent = `Tags added: ${uniqueTags.join(", ")}`;
+              }).catch((error) => {
+                console.error("Error saving tags:", error);
+                document.getElementById("exif-comment").textContent =
+                  "Error adding tags";
+              });
+            } catch (error) {
+              console.error("Error processing comment:", error);
+              document.getElementById("exif-comment").textContent =
+                "EXIF Comment: Processing error";
+            }
+          })
+          .catch((error) => {
+            console.error("Error reading PNG comment:", error);
+            document.getElementById("exif-comment").textContent =
+              "EXIF Comment: Not found or error occurred";
+          });
+      });
+
+      // Listen to theme changes
+      eagle.onThemeChanged((theme) => {
+        document.body.setAttribute("theme", theme);
+      });
+    </script>
+  </body>
+</html>
